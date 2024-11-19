@@ -1,0 +1,381 @@
+#define A0pin A0
+#define SIpin 23
+#define CLKpin 22
+#define NPIXELS 128
+
+#define ENA 12
+#define IN1 8
+#define IN2 9
+#define IN3 10
+#define IN4 11
+#define ENB 13
+
+byte Pixel[NPIXELS];
+byte Threshold_Data[NPIXELS];
+
+int LineSensor_Data[NPIXELS];
+int LineSensor_Data_Adaption[NPIXELS];
+int MAX_LineSensor_Data[NPIXELS];
+int MIN_LineSensor_Data[NPIXELS];
+int flag_line_adapation;
+
+const int IMG_WIDTH_HALF = 64;
+const int BASE_SPEED = 100;
+const float KP = 5.0;
+const float KD = 0.2;
+float error_old = 0.0;
+
+int mission_flag = 999;
+
+#define FASTADC 1
+#define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
+#define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
+
+void setup()
+{
+  int i;
+  for (i = 0; i < NPIXELS; i++)
+  {
+    LineSensor_Data[i] = 0;
+    LineSensor_Data_Adaption[i] = 0;
+    MAX_LineSensor_Data[i] = 1023;
+    MIN_LineSensor_Data[i] = 0;
+  }
+  pinMode(SIpin, OUTPUT);
+  pinMode(CLKpin, OUTPUT);
+  pinMode(A0pin, INPUT);
+
+  digitalWrite(SIpin, LOW);
+  digitalWrite(CLKpin, LOW);
+
+#if FASTADC
+
+  sbi(ADCSRA, ADPS2);
+  cbi(ADCSRA, ADPS1);
+  cbi(ADCSRA, ADPS0);
+#endif
+
+  flag_line_adapation = 0;
+
+  Serial.begin(115200);
+  Serial.println("TSL1401");
+}
+
+/////////////////////////////////////////////////
+
+void motor_l(int speed)
+{
+  if (speed >= 0)
+  {
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+    analogWrite(ENA, speed); // 0-255
+  }
+  else
+  {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+    analogWrite(ENA, -speed);
+  }
+}
+
+void motor_r(int speed)
+{
+  if (speed >= 0)
+  {
+    digitalWrite(IN3, HIGH);
+    digitalWrite(IN4, LOW);
+    analogWrite(ENB, speed); // 0-255
+  }
+  else
+  {
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, HIGH);
+    analogWrite(ENB, -speed);
+  }
+}
+
+void motor_control(int left_motor_speed, int right_motor_speed)
+{
+  motor_l(left_motor_speed);
+  motor_r(right_motor_speed);
+}
+
+////////////////////////////////////////////////////
+
+void threshold_line_image(int threshold_value)
+{
+  for (int i = 0; i < NPIXELS; i++)
+  {
+    if (Pixel[i] >= threshold_value)
+    {
+      Threshold_Data[i] = 255;
+    }
+    else
+    {
+      Threshold_Data[i] = 0;
+    }
+  }
+}
+
+void line_control(int line_center)
+
+{
+  int error = line_center - IMG_WIDTH_HALF;
+  int derivative = error - error_old;
+  float output = KP * error + KD * derivative;
+  int speed_difference = int(output);
+
+  int right_speed = BASE_SPEED - speed_difference - 20;
+  int left_speed  = BASE_SPEED + speed_difference;
+
+  left_speed = constrain(left_speed, 0, 255);
+  right_speed = constrain(right_speed, 0, 255);
+  Serial.println(left_speed);
+  Serial.println(right_speed);
+  /*
+    Serial.print("Left Speed: ");
+    Serial.println(left_speed);
+    Serial.print("Right Speed: ");
+    Serial.println(right_speed);
+    Serial.print("Line Center: ");
+    Serial.println(line_center);
+    Serial.print("Error: ");
+    Serial.println(error); 6m
+    +3jj*
+    Serial.print("Output: ");
+    Serial.println(output);
+  */
+
+
+  motor_control(left_speed, right_speed);
+
+  error_old = error;
+}
+
+void read_line_camera(void)
+{
+  int i;
+  delay(1);
+
+  digitalWrite(CLKpin, LOW);
+  digitalWrite(SIpin, HIGH);
+  digitalWrite(CLKpin, HIGH);
+  digitalWrite(SIpin, LOW);
+  delayMicroseconds(1);
+
+  for (i = 0; i < NPIXELS; i++)
+  {
+    Pixel[i] = analogRead(A0pin) / 4;
+    digitalWrite(CLKpin, LOW);
+    delayMicroseconds(1);
+    digitalWrite(CLKpin, HIGH);
+  }
+  digitalWrite(CLKpin, LOW);
+}
+
+double line_COM(void)
+{
+  double COM = 0.0;
+  double mass_sum = 0.0;
+
+  for (int i = 0; i < NPIXELS; i++)
+  {
+    mass_sum += Threshold_Data[i];
+    COM += Threshold_Data[i] * i;
+  }
+
+  if (mass_sum == 0)
+  {
+    return -1;
+  }
+
+  COM = COM / mass_sum;
+
+  return COM;
+}
+
+void line_tracing(void)
+{
+  int line_center = 64;
+
+  double cx = 0;
+  read_line_camera();
+  threshold_line_image(30);
+  cx = line_COM();
+
+  line_center  = line_COM();
+  line_control(line_center);
+
+  for (int i = 0; i < NPIXELS; i++)
+  {
+    /*
+       Serial.print(Pixel[i]);
+       Serial.print(",");
+       Serial.print(Threshold_Data[i]);
+       Serial.print(",");
+       Serial.print((i == (int)cx) ? 255 : 0);
+       Serial.println();
+    */
+  }
+  delay(50);
+}
+void loop()
+{
+  switch (mission_flag)
+  {
+    case 999:
+      motor_control(100, 120);
+      delay(2400);
+      motor_control(0, 0);
+      delay(500);
+      mission_flag = 2;
+      break;
+
+    case 0:
+      {
+        unsigned long startTime = millis(); // 현재 시간 저장
+        unsigned long duration = 1300;      // 2초 (2000ms)
+
+        while (millis() - startTime < duration)
+        {
+          line_tracing(); // line_tracing 함수 호출
+        }
+
+        // 2초가 지난 후 동작 (예: 정지)
+        motor_control(0, 0); // 모터 정지
+        //delay(1000);
+        mission_flag = 1;
+        break;
+      }
+    case 1:
+      {
+        unsigned long startTime = millis(); // 현재 시간 저장
+        unsigned long duration = 1500;      // 2초 (2000ms)
+
+        while (millis() - startTime < duration)
+        {
+          line_tracing(); // line_tracing 함수 호출
+        }
+
+        // 2초가 지난 후 동작 (예: 정지)
+        motor_control(0, 0); // 모터 정지
+        delay(1000);
+        mission_flag = 2;
+        break;
+      }
+    case 2:
+      {
+        motor_control(150, -150);
+        delay(540);
+        mission_flag = 3;
+        break;
+      }
+    case 3:
+      motor_control(0, 0);
+      delay(500);
+      mission_flag = 4;
+      break;
+
+    case 4:
+      {
+        unsigned long startTime = millis(); // 현재 시간 저장
+        unsigned long duration = 1300;      // 2초 (2000ms)
+
+        while (millis() - startTime < duration)
+        {
+          line_tracing(); // line_tracing 함수 호출
+        }
+
+        // 2초가 지난 후 동작 (예: 정지)
+        motor_control(0, 0); // 모터 정지
+        delay(1000);
+        mission_flag = 5;
+        break;
+      }
+    case 5:
+      {
+        unsigned long startTime = millis(); // 현재 시간 저장
+        unsigned long duration = 1300;      // 2초 (2000ms)
+
+        while (millis() - startTime < duration)
+        {
+          line_tracing(); // line_tracing 함수 호출
+        }
+
+        // 2초가 지난 후 동작 (예: 정지)
+        motor_control(0, 0); // 모터 정지
+        //delay(1000);
+        mission_flag = 6;
+        break;
+      }
+    case 6:
+      {
+        unsigned long startTime = millis(); // 현재 시간 저장
+        unsigned long duration = 1200;      // 2초 (2000ms)
+
+        while (millis() - startTime < duration)
+        {
+          line_tracing(); // line_tracing 함수 호출
+        }
+
+        // 2초가 지난 후 동작 (예: 정지)
+        motor_control(0, 0); // 모터 정지
+        delay(1000);
+        mission_flag = 7;
+        break;
+      }
+    case 7:
+      {
+        motor_control(-150, 250);
+        delay(600);
+        mission_flag = 8;
+        break;
+      }
+    case 8:
+      motor_control(0, 0);
+      delay(500);
+      mission_flag = 9;
+      break;
+
+    case 9:
+      {
+        /*
+          unsigned long startTime = millis(); // 현재 시간 저장
+          unsigned long duration = 1250;      // 2초 (2000ms)
+
+          while (millis() - startTime < duration)
+          {
+          line_tracing(); // line_tracing 함수 호출
+          }
+
+          // 2초가 지난 후 동작 (예: 정지)
+          motor_control(0, 0); // 모터 정지
+          delay(1000);
+          mission_flag = 10;
+          break;
+        */
+        motor_control(100, 120);
+        delay(1100);
+        motor_control(0, 0);
+        delay(500);
+        mission_flag = 10;
+        break;
+      }
+
+    case 10:
+      {
+        motor_control(-150, 250);
+        delay(650);
+        mission_flag = 11;
+        break;
+      }
+
+    case 11:
+      motor_control(0, 0);
+      delay(500);
+      break;
+  }
+
+
+}
