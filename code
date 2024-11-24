@@ -7,19 +7,19 @@
 #define CLKpin 22
 #define NPIXELS 128
 
-#define ENA 12
-#define IN1 8
-#define IN2 9
-#define IN3 10
-#define IN4 11
-#define ENB 13
+#define ENA 6
+#define IN1 7
+#define IN2 8
+#define IN3 9
+#define IN4 10
+#define ENB 11
 
 #define base_speed 100
 #define Grid_Size 0.4
 
 float target_heading_angle = 90;
 float kp_yaw = 0.21;
-float kd_yaw = 0.4;
+float kd_yaw = 0.5;
 float error_yaw = 0.0;
 float error_yaw_old = 0.0;
 float pid_out;
@@ -42,8 +42,8 @@ long prev_encoder_A = 0;
 long prev_encoder_B = 0;
 
 const int IMG_WIDTH_HALF = 64;
-const int BASE_SPEED = 70;
-const float KP = 4.0;
+const int BASE_SPEED = 100;
+const float KP = 5.0;
 const float KD = 0.2;
 float error_old = 0.0;
 
@@ -64,7 +64,7 @@ struct Waypoint
   double heading_angle;
 };
 
-Waypoint waypoints[8];
+Waypoint waypoints[12];
 int waypoint_no = 0;
 
 void setup() 
@@ -104,12 +104,15 @@ void setup()
   waypoints[0] = {0, 0};            
   waypoints[1] = {2 * Grid_Size, 0};
   waypoints[2] = {0, 90};  
-  waypoints[3] = {1 * Grid_Size, 0};  
-  waypoints[4] = {2 * Grid_Size, 0};
-  waypoints[5] = {0, 0};             
-  waypoints[6] = {0, -90};         
-  waypoints[7] = {1 * Grid_Size, 0}; 
-  waypoints[8] = {0, -90};
+  waypoints[3] = {3 * Grid_Size, 0};             
+  waypoints[4] = {0, -90};         
+  waypoints[5] = {1 * Grid_Size, 0};
+  waypoints[6] = {0, 0}; 
+  waypoints[7] = {0, -90};
+  waypoints[8] = {3 * Grid_Size, 0}; 
+  waypoints[9] = {0, 90};  
+  waypoints[10] = {1 * Grid_Size, 0};
+  
 }
 
 
@@ -322,7 +325,7 @@ void loop()
         function_flag = 3; 
         delay(500);
         reset_IMU(); 
-        target_yaw = waypoints[waypoint_no].heading_angle; 
+        target_yaw =  waypoints[waypoint_no].heading_angle + compass.heading(); 
         function_flag = 2; 
         mission_flag = 2;
       }
